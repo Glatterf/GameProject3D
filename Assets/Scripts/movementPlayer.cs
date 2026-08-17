@@ -27,6 +27,13 @@ public class movementPlayer : MonoBehaviour
     public float sprintSpeed = 8f;
     public KeyCode sprintKey = KeyCode.LeftShift;
 
+    [Header("Moving Platform")]
+    public LayerMask platformLayer;
+    public float platformCheckDistance = 0.3f;
+    private Transform currentPlatform;
+    private Vector3 lastPlatformPosition;
+    private Quaternion lastPlatformRotation;
+
     // Reference to the player's camera
     public Transform cameraTransform;
 
@@ -48,6 +55,7 @@ public class movementPlayer : MonoBehaviour
     void Update()
     {
         HandleGroundAndGravity();
+        HandlePlatformMovement();
         HandleCrouch();
         HandleMovementAndRotation();
         HandleJump();
@@ -75,6 +83,44 @@ public class movementPlayer : MonoBehaviour
         velocity.y += gravity * Time.deltaTime;
 
         wasGroundedLastFrame = isGrounded;
+    }
+
+    void HandlePlatformMovement()
+    {
+        // short downward ray from the controller's base to detect what we're standing on
+        RaycastHit hit;
+        Vector3 origin = transform.position + Vector3.up * 0.1f;
+
+        if (isGrounded && Physics.Raycast(origin, Vector3.down, out hit, platformCheckDistance + 0.1f, platformLayer))
+        {
+            Transform hitPlatform = hit.transform;
+
+            if (hitPlatform != currentPlatform)
+            {
+                // just stepped onto a (possibly new) platform, so just record its transform for next frame
+                currentPlatform = hitPlatform;
+                lastPlatformPosition = currentPlatform.position;
+                lastPlatformRotation = currentPlatform.rotation;
+            }
+            else
+            {
+                // already standing on this platform, carry its movement into the controller
+                Vector3 platformDeltaPosition = currentPlatform.position - lastPlatformPosition;
+                controller.Move(platformDeltaPosition);
+
+                // also carry rotation, so spinning platforms turn the player with them
+                Quaternion platformDeltaRotation = currentPlatform.rotation * Quaternion.Inverse(lastPlatformRotation);
+                transform.rotation = platformDeltaRotation * transform.rotation;
+
+                lastPlatformPosition = currentPlatform.position;
+                lastPlatformRotation = currentPlatform.rotation;
+            }
+        }
+        else
+        {
+            // not standing on anything trackable, stop carrying platform movement
+            currentPlatform = null;
+        }
     }
 
     void HandleCrouch()
