@@ -16,13 +16,15 @@ public class CameraMovement : MonoBehaviour
     private float yaw = 0f;
     private float pitch = 0f;
 
-    void Start()
+   void Start()
     {
-        Cursor.lockState = CursorLockMode.Locked;
+    #if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPaused = false;
+    #endif
 
+        Cursor.lockState = CursorLockMode.Locked;
         yaw = transform.eulerAngles.y;
     }
-
     void LateUpdate()
     {
         yaw += Input.GetAxis("Mouse X") * mouseSensitivity * Time.deltaTime;

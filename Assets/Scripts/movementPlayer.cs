@@ -37,6 +37,13 @@ public class movementPlayer : MonoBehaviour
     private Vector3 lastPlatformPosition;
     private Quaternion lastPlatformRotation;
 
+    [Header("Footsteps")]
+    public float walkStepInterval = 0.5f;
+    public float sprintStepInterval = 0.3f;
+    public float crouchStepInterval = 0.7f;
+    private float footstepTimer = 0f;
+    private string currentTerrainType = "soil";
+
     // Reference to the player's camera
     public Transform cameraTransform;
 
@@ -49,10 +56,13 @@ public class movementPlayer : MonoBehaviour
         controller = GetComponent<CharacterController>();
         animator = GetComponentInChildren<Animator>();
 
-        // Force standing state to match the formula from the very first frame,
-        // regardless of whatever values are currently sitting in the Inspector.
         controller.height = standingHeight;
         controller.center = new Vector3(0, standingHeight / 2f, 0);
+
+        if (AudioManager.Instance != null)
+            AudioManager.Instance.PlayBGM();
+        else
+            Debug.LogError("AudioManager not found in scene!");
     }
 
     void Update()
@@ -62,6 +72,7 @@ public class movementPlayer : MonoBehaviour
         HandleCrouch();
         HandleMovementAndRotation();
         HandleJump();
+        HandleFootsteps();
         UpdateAnimator();
 
         // apply vertical velocity (gravity/jump) every frame
@@ -76,8 +87,14 @@ public class movementPlayer : MonoBehaviour
         if (isGrounded && !wasGroundedLastFrame)
         {
             float landSpeed = currentDirection.magnitude > 0.1f ? currentMoveSpeed : 0f;
-            animator.SetFloat("LandSpeed", landSpeed);
-            animator.SetTrigger("LandTrigger");
+            if (animator != null)
+            {
+                animator.SetFloat("LandSpeed", landSpeed);
+                animator.SetTrigger("LandTrigger");
+            }
+
+            // landing thud
+            PlayFootstepNow();
         }
 
         if (isGrounded && velocity.y < 0)
@@ -90,7 +107,6 @@ public class movementPlayer : MonoBehaviour
 
     void HandlePlatformMovement()
     {
-        // short downward ray from the controller's base to detect what we're standing on
         RaycastHit hit;
         Vector3 origin = transform.position + Vector3.up * 0.1f;
 
@@ -100,18 +116,15 @@ public class movementPlayer : MonoBehaviour
 
             if (hitPlatform != currentPlatform)
             {
-                // just stepped onto a (possibly new) platform, so just record its transform for next frame
                 currentPlatform = hitPlatform;
                 lastPlatformPosition = currentPlatform.position;
                 lastPlatformRotation = currentPlatform.rotation;
             }
             else
             {
-                // already standing on this platform, carry its movement into the controller
                 Vector3 platformDeltaPosition = currentPlatform.position - lastPlatformPosition;
                 controller.Move(platformDeltaPosition);
 
-                // also carry rotation, so spinning platforms turn the player with them
                 Quaternion platformDeltaRotation = currentPlatform.rotation * Quaternion.Inverse(lastPlatformRotation);
                 transform.rotation = platformDeltaRotation * transform.rotation;
 
@@ -121,7 +134,6 @@ public class movementPlayer : MonoBehaviour
         }
         else
         {
-            // not standing on anything trackable, stop carrying platform movement
             currentPlatform = null;
         }
     }
@@ -130,16 +142,12 @@ public class movementPlayer : MonoBehaviour
     {
         bool wantsToCrouch = Input.GetKey(crouchKey);
 
-        // Only resize the physical collider on state change, and only while grounded
-        // (resizing mid-air was the cause of the earlier sinking bug).
         if (wantsToCrouch != isCrouching && isGrounded)
         {
             isCrouching = wantsToCrouch;
 
             float newHeight = isCrouching ? crouchHeight : standingHeight;
             controller.height = newHeight;
-
-            // Center.y MUST equal height/2 to keep the capsule's bottom anchored at the ground.
             controller.center = new Vector3(0, newHeight / 2f, 0);
         }
     }
@@ -149,29 +157,24 @@ public class movementPlayer : MonoBehaviour
         float horizontal = Input.GetAxis("Horizontal");
         float vertical = Input.GetAxis("Vertical");
 
-        // get direction of camera
         Vector3 forward = cameraTransform.forward;
         Vector3 right = cameraTransform.right;
 
-        // remove vertical component
         forward.y = 0f;
         right.y = 0f;
 
         forward.Normalize();
         right.Normalize();
 
-        // combine input with camera direction
         Vector3 direction = forward * vertical + right * horizontal;
 
         float currentSpeed = IsSprinting ? sprintSpeed : moveSpeed;
 
-        // store for animator
         currentDirection = direction;
         currentMoveSpeed = currentSpeed;
 
         if (direction.magnitude > 0.1f)
         {
-            // rotate player to face direction of movement
             Quaternion targetRotation = Quaternion.LookRotation(direction);
             transform.rotation = Quaternion.Slerp(
                 transform.rotation,
@@ -188,10 +191,84 @@ public class movementPlayer : MonoBehaviour
         if (isGrounded && Input.GetButtonDown("Jump"))
         {
             velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
-            animator.SetTrigger("JumpTrigger");
+            if (animator != null) animator.SetTrigger("JumpTrigger");
         }
     }
 
+    // ---------------- FOOTSTEPS ----------------
+
+    void HandleFootsteps()
+    {
+        bool isMoving = currentDirection.magnitude > 0.1f;
+
+        if (isGrounded && isMoving)
+        {
+            footstepTimer -= Time.deltaTime;
+            if (footstepTimer <= 0f)
+            {
+                PlayFootstepNow();
+
+                footstepTimer = isCrouching ? crouchStepInterval
+                              : IsSprinting ? sprintStepInterval
+                              : walkStepInterval;
+            }
+        }
+        else
+        {
+            footstepTimer = 0f; // first step plays immediately when you start moving
+        }
+    }
+
+    void PlayFootstepNow()
+    {
+        if (AudioManager.Instance == null) return;
+
+        DetectTerrainType();
+        AudioManager.Instance.PlayFootstep(currentTerrainType);
+    }
+
+    // Uses an overlap check (not a raycast) because a raycast can't detect
+    // trigger boxes the player is already standing inside.
+    void DetectTerrainType()
+    {
+        // Start above the player so the ray begins OUTSIDE the trigger boxes
+        Vector3 origin = transform.position + Vector3.up * 3f;
+        float rayLength = 4f; // reaches about 1 unit below the feet
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            origin,
+            Vector3.down,
+            rayLength,
+            ~0,
+            QueryTriggerInteraction.Collide);
+
+        Debug.DrawRay(origin, Vector3.down * rayLength, Color.red, 0.5f);
+
+        bool onWater = false;
+        bool onRock = false;
+        float feetY = transform.position.y;
+
+        foreach (RaycastHit hit in hits)
+        {
+            // ignore the player's own collider
+            if (hit.collider.transform.IsChildOf(transform)) continue;
+
+            // ignore surfaces that are well below the feet
+            if (hit.point.y < feetY - 0.5f) continue;
+
+            if (hit.collider.GetComponentInParent<WaterZone>() != null)
+                onWater = true;
+            else if (hit.collider.gameObject.name.ToLower().Contains("rock"))
+                onRock = true;
+        }
+
+        // priority: water > rock > soil
+        if (onWater) currentTerrainType = "water";
+        else if (onRock) currentTerrainType = "rock";
+        else currentTerrainType = "soil";
+
+        Debug.Log($"Terrain: {currentTerrainType}");
+    }
     void UpdateAnimator()
     {
         if (animator == null) return;
