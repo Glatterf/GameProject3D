@@ -26,6 +26,9 @@ public class movementPlayer : MonoBehaviour
     [Header("Sprint")]
     public float sprintSpeed = 8f;
     public KeyCode sprintKey = KeyCode.LeftShift;
+    public KeyCode sprintKeyAlt = KeyCode.RightShift;
+
+    private bool IsSprinting => Input.GetKey(sprintKey) || Input.GetKey(sprintKeyAlt);
 
     [Header("Moving Platform")]
     public LayerMask platformLayer;
@@ -160,7 +163,7 @@ public class movementPlayer : MonoBehaviour
         // combine input with camera direction
         Vector3 direction = forward * vertical + right * horizontal;
 
-        float currentSpeed = Input.GetKey(sprintKey) ? sprintSpeed : moveSpeed;
+        float currentSpeed = IsSprinting ? sprintSpeed : moveSpeed;
 
         // store for animator
         currentDirection = direction;
@@ -196,6 +199,6 @@ public class movementPlayer : MonoBehaviour
         float speedValue = currentDirection.magnitude > 0.1f ? currentMoveSpeed : 0f;
         animator.SetFloat("Speed", speedValue);
         animator.SetBool("IsCrouching", isCrouching);
-        animator.SetBool("IsSprinting", Input.GetKey(sprintKey));
+        animator.SetBool("IsSprinting", IsSprinting);
     }
 }
